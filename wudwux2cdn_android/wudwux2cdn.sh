@@ -7,20 +7,6 @@ mkdir -p auto_out
 mkdir -p commonkey
 mkdir -p titlekeys
 
-find_common_key() {
-    if [ -f commonkey/common.key ]; then
-        common_key_path="commonkey/common.key"
-    elif [ -f titlekeys/common.key ]; then
-        common_key_path="titlekeys/common.key"
-    elif [ -f auto_in/common.key ]; then
-        common_key_path="auto_in/common.key"
-    elif [ -f common.key ]; then
-        common_key_path="common.key"
-    else
-        common_key_path=""
-    fi
-}
-
 read_hex_key() {
     prompt="$1"
 
@@ -47,32 +33,45 @@ key_file_to_hex() {
     xxd -p "$1" | tr -d '\n'
 }
 
+flatten_output_folder() {
+    game_name="$1"
+    out_dir="auto_out/$game_name"
+
+    title_dir="$(find "$out_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+
+    if [ -n "$title_dir" ]; then
+        mv "$title_dir"/* "$out_dir/"
+        rmdir "$title_dir"
+    fi
+}
+
 create_common_key() {
     key="$(read_hex_key "Enter Wii U common key: ")"
 
     echo -n "$key" | xxd -r -p > commonkey/common.key
 
+    echo
     echo "common.key created in commonkey/."
 }
 
-create_title_key_files() {
+create_title_key_file() {
     while true; do
-        echo ""
+        echo
         read -p "Enter game filename or name, or type 0 to return: " name
 
         if [ "$name" = "0" ]; then
             break
         fi
 
-        base="$name"
-        base="${base%.wud}"
-        base="${base%.wux}"
+        game_name="$name"
+        game_name="${game_name%.wud}"
+        game_name="${game_name%.wux}"
 
         key="$(read_hex_key "Enter title key: ")"
 
-        echo -n "$key" | xxd -r -p > "titlekeys/$base.key"
+        echo -n "$key" | xxd -r -p > "titlekeys/$game_name.key"
 
-        echo "Created: titlekeys/$base.key"
+        echo "Created: titlekeys/$game_name.key"
     done
 }
 
@@ -84,27 +83,26 @@ extract_games() {
 
     found=0
 
-    for game in auto_in/*.wud auto_in/*.wux; do
-        [ -f "$game" ] || continue
+    for game_path in auto_in/*.wud auto_in/*.wux; do
+        [ -f "$game_path" ] || continue
         found=1
 
-        filename="$(basename "$game")"
-        base="${filename%.*}"
+        game_file="$(basename "$game_path")"
+        game_name="${game_file%.*}"
+        title_key_path_auto="auto_in/$game_name.key"
+        title_key_path_saved="titlekeys/$game_name.key"
+        out_dir="auto_out/$game_name"
 
-        echo ""
-        echo "Processing: $filename"
-
-        find_common_key
+        echo
+        echo "Processing: $game_file"
 
         common_arg=()
-        common_from_file=0
         common_entered_manually=0
 
-        if [ -n "$common_key_path" ]; then
-            echo "Using common.key from: $common_key_path"
-            common_hex="$(key_file_to_hex "$common_key_path")"
+        if [ -f commonkey/common.key ]; then
+            echo "Using common.key from: commonkey/common.key"
+            common_hex="$(key_file_to_hex commonkey/common.key)"
             common_arg=(-commonkey "$common_hex")
-            common_from_file=1
         else
             common_hex="$(read_hex_key "Enter Wii U common key: ")"
             common_arg=(-commonkey "$common_hex")
@@ -112,33 +110,32 @@ extract_games() {
         fi
 
         title_arg=()
-        title_key_path=""
 
-        if [ -f "titlekeys/$base.key" ]; then
-            title_key_path="titlekeys/$base.key"
-            echo "Using title key from: $title_key_path"
-            title_hex="$(key_file_to_hex "$title_key_path")"
+        if [ -f "$title_key_path_auto" ]; then
+            echo "Using title key from: $title_key_path_auto"
+            title_hex="$(key_file_to_hex "$title_key_path_auto")"
             title_arg=(-titleKey "$title_hex")
-        elif [ -f "auto_in/$base.key" ]; then
-            title_key_path="auto_in/$base.key"
-            echo "Using title key from: $title_key_path"
-            title_hex="$(key_file_to_hex "$title_key_path")"
+        elif [ -f "$title_key_path_saved" ]; then
+            echo "Using title key from: $title_key_path_saved"
+            title_hex="$(key_file_to_hex "$title_key_path_saved")"
             title_arg=(-titleKey "$title_hex")
         else
-            title_hex="$(read_hex_key "Enter title key for $base: ")"
+            title_hex="$(read_hex_key "Enter title key for $game_name: ")"
             title_arg=(-titleKey "$title_hex")
         fi
 
-        out_dir="auto_out/$base"
+        rm -rf "$out_dir"
 
         java -jar JWUDTool.jar \
-            -in "$game" \
+            -in "$game_path" \
             -out "$out_dir" \
             -extract all \
             "${title_arg[@]}" \
             "${common_arg[@]}"
 
         if [ "$?" -eq 0 ] && [ -d "$out_dir" ]; then
+            flatten_output_folder "$game_name"
+
             echo "Extraction completed: $out_dir"
 
             if [ "$common_entered_manually" -eq 1 ] && [ ! -f commonkey/common.key ]; then
@@ -146,75 +143,91 @@ extract_games() {
                 echo "Created common.key in commonkey/"
             fi
 
-            rm -f "$game"
-            echo "Removed input file: $filename"
+            rm -f -- "$game_path"
+            rm -f -- "auto_in/$game_file"
 
-            if [ -n "$title_key_path" ] && [ "$title_key_path" = "auto_in/$base.key" ]; then
-                mv "$title_key_path" "titlekeys/$base.key"
-                echo "Moved $base.key to titlekeys/"
+            if [ ! -f "auto_in/$game_file" ]; then
+                echo "Removed input file: $game_file"
+            else
+                echo "Warning: input file could not be removed: $game_file"
             fi
 
-            if [ "$common_from_file" -eq 1 ]; then
-                if [ "$common_key_path" = "auto_in/common.key" ] || [ "$common_key_path" = "common.key" ] || [ "$common_key_path" = "titlekeys/common.key" ]; then
-                    if [ ! -f commonkey/common.key ]; then
-                        mv "$common_key_path" commonkey/common.key
-                        echo "Moved common.key to commonkey/"
-                    fi
+            if [ -f "$title_key_path_auto" ]; then
+                rm -f -- "$title_key_path_auto"
+
+                if [ ! -f "$title_key_path_auto" ]; then
+                    echo "Removed input key: $game_name.key"
+                else
+                    echo "Warning: input key could not be removed: $game_name.key"
                 fi
             fi
         else
-            echo "Error: extraction failed for $filename"
+            echo "Error: extraction failed for $game_file"
             echo "Input file was not removed."
         fi
     done
 
     if [ "$found" -eq 0 ]; then
-        echo ""
+        echo
         echo "No .wud or .wux files found in auto_in."
     else
-        echo ""
+        echo
         echo "Done."
     fi
 }
 
 while true; do
-    echo ""
+    clear
+
+    echo
     echo "wudwux2cdn_android"
-    echo ""
+    echo
     echo "1) Extract WUD/WUX files"
     echo "2) Create common.key"
     echo "3) Create title key file"
     echo "9) Run first-time setup (required before first use)"
     echo "0) Exit"
-    echo ""
+    echo
 
     read -p "Choose what to do: " choice
 
     case "$choice" in
 
         1)
+            clear
             extract_games
+            echo
+            read -p "Press Enter to continue..."
             ;;
 
         2)
+            clear
             create_common_key
+            echo
+            read -p "Press Enter to continue..."
             ;;
 
         3)
-            create_title_key_files
+            clear
+            create_title_key_file
+            echo
+            read -p "Press Enter to continue..."
             ;;
 
         9)
+            clear
             bash ./wudwux2cdn_setup.sh
             ;;
 
         0)
-            echo "Exit."
+            clear
             exit 0
             ;;
 
         *)
+            echo
             echo "Invalid choice."
+            sleep 1
             ;;
 
     esac
