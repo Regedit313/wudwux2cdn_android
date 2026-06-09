@@ -121,6 +121,10 @@ auto_in/
 
 ---- Mario Kart 8.wud
 
+Only .wud and .wux files are processed.
+
+Any other files placed in auto_in/ are ignored except matching .key files.
+
 Optional title key files:
 
 titlekeys/
@@ -284,6 +288,10 @@ wudwux2cdn_android/
 -------- Zelda.key
 
 -------- Mario Kart 8.key
+
+Successfully extracted .wud/.wux files are removed from auto_in/.
+
+Title key files placed in auto_in/ are also removed after a successful extraction.
 
 ---
 
